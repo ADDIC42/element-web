@@ -451,7 +451,7 @@ async function loadOrCreatePickleKey(credentials: IMatrixClientCreds): Promise<s
  * Clear storage then save new credentials in storage
  * @param credentials as returned from login
  */
-async function onSuccessfulDelegatedAuthLogin(credentials: IMatrixClientCreds): Promise<void> {
+export async function onSuccessfulDelegatedAuthLogin(credentials: IMatrixClientCreds): Promise<void> {
     await clearStorage();
     // SSO does not go through setLoggedIn so we need to load/create the pickle key here too
     credentials.pickleKey = await loadOrCreatePickleKey(credentials);
@@ -1222,15 +1222,27 @@ window.mxLoginWithAccessToken = async (hsUrl: string, accessToken: string): Prom
         baseUrl: hsUrl,
         accessToken,
     });
-    const { user_id: userId, device_id: deviceId } = await tempClient.whoami();
-    await doSetLoggedIn(
-        {
-            homeserverUrl: hsUrl,
-            accessToken,
-            userId,
-            deviceId,
-        },
-        true,
-        false,
-    );
+    
+    const whoamiResult = await tempClient.whoami();
+    const userId = whoamiResult.user_id;
+    const deviceId = whoamiResult.device_id;
+    
+    if (!deviceId) {
+        logger.warn("mxLoginWithAccessToken: deviceId is missing - encryption will not be available");
+    }
+    
+    const credentials: IMatrixClientCreds = {
+        homeserverUrl: hsUrl,
+        accessToken,
+        userId,
+        deviceId: deviceId || undefined,
+    };
+    
+    // Create or load pickle key for Rust Crypto encryption (required for E2EE)
+    // Only create pickle key if we have a deviceId, otherwise encryption won't work
+    if (deviceId) {
+        credentials.pickleKey = await loadOrCreatePickleKey(credentials);
+    }
+    
+    await doSetLoggedIn(credentials, true, false);
 };

@@ -9,7 +9,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { type JSX, type ReactNode } from "react";
 import classNames from "classnames";
 import { logger } from "matrix-js-sdk/src/logger";
-import { type SSOFlow, SSOAction } from "matrix-js-sdk/src/matrix";
+import { createClient, type SSOFlow, SSOAction } from "matrix-js-sdk/src/matrix";
 
 import { _t, UserFriendlyError } from "../../../languageHandler";
 import Login, { type ClientLoginFlow, type OidcNativeFlow } from "../../../Login";
@@ -264,6 +264,117 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
                     busy: false,
                     errorText,
                     ...discoveryState,
+                });
+            }
+        }
+    };
+
+    private onTokenLoginClick = async (): Promise<void> => {
+        if (this.isBusy()) {
+            return;
+        }
+
+        this.setState({
+            busy: true,
+            busyLoggingIn: true,
+            errorText: null,
+            loginIncorrect: false,
+        });
+
+        try {
+            // Шаг 1: Получаем токен от корпоративного backend
+            const response = await fetch("https://isushi.elitibi.ru/matrix/get_token.php", {
+                credentials: "include",
+            });
+
+            if (!response.ok) {
+                logger.error(`Failed to fetch token: HTTP ${response.status}`);
+                throw new Error(`Не удалось получить токен: HTTP ${response.status}`);
+            }
+
+            const data = (await response.json()) as {
+                ok?: boolean;
+                access_token?: string;
+                home_server?: string;
+                matrix_user_id?: string;
+            };
+
+            if (!data.ok || !data.access_token) {
+                logger.error("Invalid token response", data);
+                throw new Error("Некорректный ответ от сервера токенов");
+            }
+
+            // Шаг 2: Определяем homeserver URL
+            // Используем домашний сервер по умолчанию: https://matrix.rpadconnect.app
+            const defaultHomeServer = "https://matrix.rpadconnect.app";
+            const homeServer =
+                data.home_server && (data.home_server.startsWith("http://") || data.home_server.startsWith("https://"))
+                    ? data.home_server
+                    : data.home_server
+                      ? `https://${data.home_server}`
+                      : defaultHomeServer;
+
+            // Шаг 3: Валидируем токен через /whoami
+            let whoamiResult: { user_id: string; device_id?: string } | null = null;
+            try {
+                const checkClient = createClient({
+                    baseUrl: homeServer,
+                    accessToken: data.access_token,
+                });
+                whoamiResult = await checkClient.whoami();
+                
+                // Проверяем, что токен принадлежит ожидаемому пользователю
+                if (data.matrix_user_id && whoamiResult.user_id !== data.matrix_user_id) {
+                    throw new Error(
+                        `Токен принадлежит другому пользователю: ожидался ${data.matrix_user_id}, получен ${whoamiResult.user_id}`,
+                    );
+                }
+            } catch (checkError) {
+                logger.error("Token validation failed", checkError);
+                throw checkError;
+            }
+
+            // Шаг 4: Используем стандартный механизм входа по токену
+            const loginWithAccessToken = (window as unknown as {
+                mxLoginWithAccessToken?: (hsUrl: string, accessToken: string) => Promise<void>;
+            }).mxLoginWithAccessToken;
+
+            if (!loginWithAccessToken) {
+                logger.error("mxLoginWithAccessToken is not available");
+                throw new Error("Внутренняя ошибка: функция входа недоступна");
+            }
+            
+            await loginWithAccessToken(homeServer, data.access_token);
+
+            // Шаг 5: Уведомляем родительский компонент о успешном входе
+            if (whoamiResult) {
+                const credentials: IMatrixClientCreds = {
+                    homeserverUrl: homeServer,
+                    accessToken: data.access_token,
+                    userId: whoamiResult.user_id,
+                    deviceId: whoamiResult.device_id,
+                };
+                
+                this.props.onLoggedIn(credentials);
+            }
+
+            // Успешный логин: дальнейшее состояние возьмёт на себя MatrixChat через Lifecycle.
+        } catch (e) {
+            logger.error("Corporate token login failed", e);
+            const errorMessage =
+                e instanceof Error
+                    ? e.message
+                    : "Не удалось выполнить вход по корпоративному токену. Обратитесь в ИТ-подразделение или попробуйте войти по логину и паролю.";
+            
+            this.setState({
+                errorText: errorMessage,
+                loginIncorrect: false,
+            });
+        } finally {
+            if (!this.unmounted) {
+                this.setState({
+                    busy: false,
+                    busyLoggingIn: false,
                 });
             }
         }
@@ -544,6 +655,15 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
                         disabled={this.isBusy()}
                     />
                     {this.renderLoginComponentForFlows()}
+                    <AccessibleButton
+                        className="mx_Login_fullWidthButton"
+                        kind="primary"
+                        disabled={this.isBusy()}
+                        onClick={this.onTokenLoginClick}
+                    >
+                        {/* Корпоративный вход по готовому Matrix access_token */}
+                        Войти по корпоративному токену
+                    </AccessibleButton>
                     {footer}
                 </AuthBody>
             </AuthPage>

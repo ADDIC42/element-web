@@ -287,8 +287,12 @@ class MatrixClientPegClass implements IMatrixClientPeg {
         this.matrixClient.store.on?.("closed", this.onUnexpectedStoreClose);
 
         // try to initialise e2e on the new client
-        if (!SettingsStore.getValue("lowBandwidth")) {
+        // Only initialize crypto if we have a deviceId, otherwise encryption won't work
+        const deviceId = this.matrixClient.getDeviceId();
+        if (!SettingsStore.getValue("lowBandwidth") && deviceId) {
             await this.initClientCrypto(assignOpts.rustCryptoStoreKey, assignOpts.rustCryptoStorePassword);
+        } else if (!deviceId) {
+            logger.warn("Skipping crypto initialization: deviceId is missing. Encryption will not be available.");
         }
 
         const opts = utils.deepCopy(this.opts);
