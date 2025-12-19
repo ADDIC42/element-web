@@ -617,9 +617,22 @@ export default class InviteDialog extends React.PureComponent<Props, IInviteDial
     };
 
     private updateSuggestions = async (term: string): Promise<void> => {
-        MatrixClientPeg.safeGet()
+        const client = MatrixClientPeg.safeGet();
+        const homeserverUrl = client.getHomeserverUrl();
+        logger.log(
+            `[InviteDialog] Searching user directory on homeserver: ${homeserverUrl}`,
+            `Endpoint: POST /_matrix/client/v3/user_directory/search`,
+            { search_term: term },
+        );
+        
+        client
             .searchUserDirectory({ term })
             .then(async (r): Promise<void> => {
+                logger.log(
+                    `[InviteDialog] Search completed on ${homeserverUrl}`,
+                    `Found ${r.results?.length || 0} users`,
+                    `Limited: ${r.limited}`,
+                );
                 if (term !== this.state.filterText) {
                     // Discard the results - we were probably too slow on the server-side to make
                     // these results useful. This is a race we want to avoid because we could overwrite

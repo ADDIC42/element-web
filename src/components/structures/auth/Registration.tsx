@@ -737,7 +737,7 @@ export default class Registration extends React.Component<IProps, IState> {
         } else {
             body = (
                 <Fragment>
-                    <div className="mx_Register_mainContent">
+                    {/* <div className="mx_Register_mainContent">
                         <AuthHeaderDisplay
                             title={_t("auth|create_account_title")}
                             serverPicker={
@@ -755,7 +755,7 @@ export default class Registration extends React.Component<IProps, IState> {
                             {serverDeadSection}
                         </AuthHeaderDisplay>
                         {this.renderRegisterComponent()}
-                    </div>
+                    </div> */}
                     <div className="mx_Register_footerActions">
                         {goBack}
                         {signIn}

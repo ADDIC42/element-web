@@ -9,7 +9,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { type JSX, type ReactNode } from "react";
 import classNames from "classnames";
 import { logger } from "matrix-js-sdk/src/logger";
-import { createClient, type SSOFlow, SSOAction } from "matrix-js-sdk/src/matrix";
+import { type SSOFlow, SSOAction } from "matrix-js-sdk/src/matrix";
 
 import { _t, UserFriendlyError } from "../../../languageHandler";
 import Login, { type ClientLoginFlow, type OidcNativeFlow } from "../../../Login";
@@ -31,6 +31,7 @@ import AccessibleButton, { type ButtonEvent } from "../../views/elements/Accessi
 import { type ValidatedServerConfig } from "../../../utils/ValidatedServerConfig";
 import { filterBoolean } from "../../../utils/arrays";
 import { startOidcLogin } from "../../../utils/oidc/authorize";
+import { getCorporateToken } from "../../../utils/corporateTokenLogin";
 
 interface IProps {
     serverConfig: ValidatedServerConfig;
@@ -77,6 +78,9 @@ interface IState {
     serverIsAlive: boolean;
     serverErrorIsFatal: boolean;
     serverDeadError?: ReactNode;
+    
+    // Флаг для отслеживания автоматической попытки входа по токену
+    autoTokenLoginAttempted: boolean;
 }
 
 type OnPasswordLogin = {
@@ -109,6 +113,8 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
             serverIsAlive: true,
             serverErrorIsFatal: false,
             serverDeadError: "",
+            
+            autoTokenLoginAttempted: false,
         };
 
         // map from login step type to a function which will render a control
@@ -127,7 +133,10 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
 
     public componentDidMount(): void {
         this.unmounted = false;
-        this.initLoginLogic(this.props.serverConfig);
+        this.initLoginLogic(this.props.serverConfig).then(() => {
+            // После инициализации логики входа пытаемся автоматически войти по токену
+            this.tryAutoTokenLogin();
+        });
     }
 
     public componentWillUnmount(): void {
@@ -143,11 +152,26 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
             prevProps.serverConfig.delegatedAuthentication !== this.props.serverConfig.delegatedAuthentication
         ) {
             // Ensure that we end up actually logging in to the right place
-            this.initLoginLogic(this.props.serverConfig);
+            this.initLoginLogic(this.props.serverConfig).then(() => {
+                // После обновления конфигурации сервера также пытаемся автоматически войти по токену
+                this.tryAutoTokenLogin();
+            });
         }
     }
 
     public isBusy = (): boolean => !!this.state.busy || !!this.props.busy;
+
+    private tryAutoTokenLogin = (): void => {
+        // Пытаемся автоматически войти по токену только один раз
+        if (!this.state.autoTokenLoginAttempted && !this.unmounted) {
+            this.setState({ autoTokenLoginAttempted: true });
+            // Вызываем автоматический вход в тихом режиме (без показа ошибок)
+            this.onTokenLoginClick(true).catch(() => {
+                // Тихая ошибка - просто продолжаем показывать форму входа
+                logger.log("Auto token login failed silently, showing login form");
+            });
+        }
+    };
 
     public onPasswordLogin: OnPasswordLogin = async (
         username: string | undefined,
@@ -269,7 +293,7 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
         }
     };
 
-    private onTokenLoginClick = async (): Promise<void> => {
+    private onTokenLoginClick = async (silent: boolean = false): Promise<void> => {
         if (this.isBusy()) {
             return;
         }
@@ -282,90 +306,56 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
         });
 
         try {
-            // Шаг 1: Получаем токен от корпоративного backend
-            const response = await fetch("https://isushi.elitibi.ru/matrix/get_token.php", {
-                credentials: "include",
-            });
+            const result = await getCorporateToken();
 
-            if (!response.ok) {
-                logger.error(`Failed to fetch token: HTTP ${response.status}`);
-                throw new Error(`Не удалось получить токен: HTTP ${response.status}`);
-            }
-
-            const data = (await response.json()) as {
-                ok?: boolean;
-                access_token?: string;
-                home_server?: string;
-                matrix_user_id?: string;
-            };
-
-            if (!data.ok || !data.access_token) {
-                logger.error("Invalid token response", data);
-                throw new Error("Некорректный ответ от сервера токенов");
-            }
-
-            // Шаг 2: Определяем homeserver URL
-            // Используем домашний сервер по умолчанию: https://matrix.rpadconnect.app
-            const defaultHomeServer = "https://matrix.rpadconnect.app";
-            const homeServer =
-                data.home_server && (data.home_server.startsWith("http://") || data.home_server.startsWith("https://"))
-                    ? data.home_server
-                    : data.home_server
-                      ? `https://${data.home_server}`
-                      : defaultHomeServer;
-
-            // Шаг 3: Валидируем токен через /whoami
-            let whoamiResult: { user_id: string; device_id?: string } | null = null;
-            try {
-                const checkClient = createClient({
-                    baseUrl: homeServer,
-                    accessToken: data.access_token,
-                });
-                whoamiResult = await checkClient.whoami();
-                
-                // Проверяем, что токен принадлежит ожидаемому пользователю
-                if (data.matrix_user_id && whoamiResult.user_id !== data.matrix_user_id) {
-                    throw new Error(
-                        `Токен принадлежит другому пользователю: ожидался ${data.matrix_user_id}, получен ${whoamiResult.user_id}`,
-                    );
+            // В тихом режиме просто возвращаемся, если токен недоступен
+            if (!result) {
+                if (silent) {
+                    return;
                 }
-            } catch (checkError) {
-                logger.error("Token validation failed", checkError);
-                throw checkError;
+                throw new Error("Токен недоступен. Обратитесь в ИТ-подразделение.");
             }
 
-            // Шаг 4: Используем стандартный механизм входа по токену
-            const loginWithAccessToken = (window as unknown as {
-                mxLoginWithAccessToken?: (hsUrl: string, accessToken: string) => Promise<void>;
-            }).mxLoginWithAccessToken;
-
-            if (!loginWithAccessToken) {
-                logger.error("mxLoginWithAccessToken is not available");
-                throw new Error("Внутренняя ошибка: функция входа недоступна");
-            }
-            
-            await loginWithAccessToken(homeServer, data.access_token);
-
-            // Шаг 5: Уведомляем родительский компонент о успешном входе
-            if (whoamiResult) {
-                const credentials: IMatrixClientCreds = {
-                    homeserverUrl: homeServer,
-                    accessToken: data.access_token,
-                    userId: whoamiResult.user_id,
-                    deviceId: whoamiResult.device_id,
-                };
-                
-                this.props.onLoggedIn(credentials);
+            // Если была ошибка валидации
+            if (!result.success) {
+                if (silent) {
+                    return;
+                }
+                throw new Error(result.error || "Ошибка при получении токена");
             }
 
-            // Успешный логин: дальнейшее состояние возьмёт на себя MatrixChat через Lifecycle.
+            // Если успешно, используем стандартный механизм входа по токену
+            if (result.credentials) {
+                const loginWithAccessToken = (window as unknown as {
+                    mxLoginWithAccessToken?: (hsUrl: string, accessToken: string) => Promise<void>;
+                }).mxLoginWithAccessToken;
+
+                if (!loginWithAccessToken) {
+                    logger.error("mxLoginWithAccessToken is not available");
+                    if (silent) {
+                        return;
+                    }
+                    throw new Error("Внутренняя ошибка: функция входа недоступна");
+                }
+
+                await loginWithAccessToken(result.credentials.homeserverUrl, result.credentials.accessToken);
+
+                // Уведомляем родительский компонент о успешном входе
+                this.props.onLoggedIn(result.credentials);
+            }
         } catch (e) {
             logger.error("Corporate token login failed", e);
+
+            // В тихом режиме не показываем ошибки пользователю
+            if (silent) {
+                return;
+            }
+
             const errorMessage =
                 e instanceof Error
                     ? e.message
                     : "Не удалось выполнить вход по корпоративному токену. Обратитесь в ИТ-подразделение или попробуйте войти по логину и паролю.";
-            
+
             this.setState({
                 errorText: errorMessage,
                 loginIncorrect: false,
@@ -621,23 +611,25 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
                     )}
                 </div>
             );
-        } else if (SettingsStore.getValue(UIFeature.Registration)) {
-            footer = (
-                <span className="mx_AuthBody_changeFlow">
-                    {_t(
-                        "auth|create_account_prompt",
-                        {},
-                        {
-                            a: (sub) => (
-                                <AccessibleButton kind="link_inline" onClick={this.onTryRegisterClick}>
-                                    {sub}
-                                </AccessibleButton>
-                            ),
-                        },
-                    )}
-                </span>
-            );
-        }
+        } 
+        //TODO: вернуть если нужно будет добавить регистрацию
+        // else if (SettingsStore.getValue(UIFeature.Registration)) {
+        //     footer = (
+        //         <span className="mx_AuthBody_changeFlow">
+        //             {_t(
+        //                 "auth|create_account_prompt",
+        //                 {},
+        //                 {
+        //                     a: (sub) => (
+        //                         <AccessibleButton kind="link_inline" onClick={this.onTryRegisterClick}>
+        //                             {sub}
+        //                         </AccessibleButton>
+        //                     ),
+        //                 },
+        //             )}
+        //         </span>
+        //     );
+        // }
 
         return (
             <AuthPage>
@@ -649,17 +641,17 @@ export default class LoginComponent extends React.PureComponent<IProps, IState> 
                     </h1>
                     {errorTextSection}
                     {serverDeadSection}
-                    <ServerPicker
+                    {/* <ServerPicker //TODO: вернуть если нужно будет добавить выбор сервера
                         serverConfig={this.props.serverConfig}
                         onServerConfigChange={this.props.onServerConfigChange}
                         disabled={this.isBusy()}
-                    />
+                    /> */}
                     {this.renderLoginComponentForFlows()}
                     <AccessibleButton
-                        className="mx_Login_fullWidthButton"
+                        className="mx_Login_submit"
                         kind="primary"
                         disabled={this.isBusy()}
-                        onClick={this.onTokenLoginClick}
+                        onClick={() => this.onTokenLoginClick(false)}
                     >
                         {/* Корпоративный вход по готовому Matrix access_token */}
                         Войти по корпоративному токену

@@ -41,14 +41,37 @@ export const useUserDirectory = (): {
 
             try {
                 setLoading(true);
-                const { results } = await MatrixClientPeg.safeGet().searchUserDirectory(opts);
+                const client = MatrixClientPeg.safeGet();
+                const homeserverUrl = client.getHomeserverUrl();
+                console.log(
+                    `[UserDirectory] Searching on homeserver: ${homeserverUrl}`,
+                    `Endpoint: POST /_matrix/client/v3/user_directory/search`,
+                    { search_term: term, limit },
+                );
+                
+                const response = await client.searchUserDirectory(opts);
+                
+                console.log(
+                    `[UserDirectory] Search completed on ${homeserverUrl}`,
+                    `Found ${response.results?.length || 0} users`,
+                    `Limited: ${response.limited}`,
+                    `Results:`,
+                    response.results,
+                );
+                
                 updateResult(
                     opts,
-                    results.map((user) => new DirectoryMember(user)),
+                    (response.results || []).map((user) => new DirectoryMember(user)),
                 );
                 return true;
             } catch (e) {
-                console.error("Could not fetch user in user directory for params", { limit, term }, e);
+                console.error(
+                    `[UserDirectory] Search failed on ${MatrixClientPeg.safeGet().getHomeserverUrl()}`,
+                    `Params:`,
+                    { search_term: term, limit },
+                    `Error:`,
+                    e,
+                );
                 updateResult(opts, []);
                 return false;
             } finally {

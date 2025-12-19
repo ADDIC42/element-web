@@ -81,6 +81,7 @@ import {
 } from "./utils/tokens/tokens";
 import { TokenRefresher } from "./utils/oidc/TokenRefresher";
 import { checkBrowserSupport } from "./SupportedBrowser";
+import { getCorporateToken } from "./utils/corporateTokenLogin";
 
 const HOMESERVER_URL_KEY = "mx_hs_url";
 const ID_SERVER_URL_KEY = "mx_is_url";
@@ -153,6 +154,49 @@ interface ILoadSessionOpts {
 }
 
 /**
+ * Вызывается при старте приложения, если не удалось восстановить сессию из хранилища.
+ */
+async function tryCorporateTokenLogin(): Promise<boolean> {
+    try {
+        logger.log("Attempting corporate token login...");
+        
+        const result = await getCorporateToken();
+        
+        // Если токен недоступен (null), просто возвращаем false без ошибок
+        if (!result) {
+            return false;
+        }
+        
+        // Если была ошибка валидации, возвращаем false
+        if (!result.success) {
+            logger.log("Corporate token login failed:", result.error);
+            return false;
+        }
+        
+        // Если успешно, устанавливаем сессию через doSetLoggedIn
+        if (result.credentials) {
+            logger.log(
+                `Corporate token login successful for ${result.credentials.userId} on homeserver ${result.credentials.homeserverUrl}`,
+            );
+            await doSetLoggedIn(
+                {
+                    ...result.credentials,
+                    freshLogin: true,
+                },
+                false, // не очищаем хранилище
+                true, // это свежий логин
+            );
+            return true;
+        }
+        
+        return false;
+    } catch (e) {
+        logger.log("Corporate token login failed silently", e);
+        return false;
+    }
+}
+
+/**
  * Called at startup, to attempt to build a logged-in Matrix session. It tries
  * a number of things:
  *
@@ -160,7 +204,8 @@ interface ILoadSessionOpts {
  *    that.
  * 2. if an access token is stored in local storage (from a previous session),
  *    it uses that.
- * 3. it attempts to auto-register as a guest user.
+ * 3. it attempts to auto-login using corporate token.
+ * 4. it attempts to auto-register as a guest user.
  *
  * If any of steps 1-4 are successful, it will call {_doSetLoggedIn}, which in
  * turn will raise on_logged_in and will_start_client events.
@@ -218,6 +263,12 @@ export async function loadSession(opts: ILoadSessionOpts = {}): Promise<boolean>
         }
         if (sessionLockStolen) {
             return false;
+        }
+
+        // Пытаемся автоматически войти по корпоративному токену
+        const corporateTokenSuccess = await tryCorporateTokenLogin(); 
+        if (corporateTokenSuccess) {
+            return true;
         }
 
         if (enableGuest && guestHsUrl) {

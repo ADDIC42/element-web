@@ -363,18 +363,18 @@ export default class PasswordLogin extends React.PureComponent<IProps, IState> {
     public render(): React.ReactNode {
         let forgotPasswordJsx: JSX.Element | undefined;
 
-        if (this.props.onForgotPasswordClick) {
-            forgotPasswordJsx = (
-                <AccessibleButton
-                    className="mx_Login_forgot"
-                    disabled={this.props.busy}
-                    kind="link"
-                    onClick={this.onForgotPasswordClick}
-                >
-                    {_t("auth|reset_password_button")}
-                </AccessibleButton>
-            );
-        }
+        // if (this.props.onForgotPasswordClick) { //TODO: вернуть если нужно будет добавить сброс пароля
+        //     forgotPasswordJsx = (
+        //         <AccessibleButton
+        //             className="mx_Login_forgot"
+        //             disabled={this.props.busy}
+        //             kind="link"
+        //             onClick={this.onForgotPasswordClick}
+        //         >
+        //             {_t("auth|reset_password_button")}
+        //         </AccessibleButton>
+        //     );
+        // }
 
         const pwFieldClass = classNames({
             error: this.props.loginIncorrect && !this.isLoginEmpty(), // only error password if error isn't top field
@@ -387,27 +387,27 @@ export default class PasswordLogin extends React.PureComponent<IProps, IState> {
 
         let loginType;
         if (!SdkConfig.get().disable_3pid_login) {
-            loginType = (
-                <div className="mx_Login_type_container">
-                    <label className="mx_Login_type_label">{_t("auth|identifier_label")}</label>
-                    <Field
-                        element="select"
-                        value={this.state.loginType}
-                        onChange={this.onLoginTypeChange}
-                        disabled={this.props.busy}
-                    >
-                        <option key={LoginField.MatrixId} value={LoginField.MatrixId}>
-                            {_t("common|username")}
-                        </option>
-                        <option key={LoginField.Email} value={LoginField.Email}>
-                            {_t("common|email_address")}
-                        </option>
-                        <option key={LoginField.Password} value={LoginField.Password}>
-                            {_t("auth|msisdn_field_label")}
-                        </option>
-                    </Field>
-                </div>
-            );
+            // loginType = ( //TODO: вернуть если нужно будет добавить выбор типа входа
+            //     // <div className="mx_Login_type_container">
+            //     //     {/* <label className="mx_Login_type_label">{_t("auth|identifier_label")}</label> */}
+            //     //     {/* <Field
+            //     //         element="select"
+            //     //         value={this.state.loginType}
+            //     //         onChange={this.onLoginTypeChange}
+            //     //         disabled={this.props.busy}
+            //     //     >
+            //     //         <option key={LoginField.MatrixId} value={LoginField.MatrixId}>
+            //     //             {_t("common|username")}
+            //     //         </option>
+            //     //         <option key={LoginField.Email} value={LoginField.Email}>
+            //     //             {_t("common|email_address")}
+            //     //         </option>
+            //     //         <option key={LoginField.Password} value={LoginField.Password}>
+            //     //             {_t("auth|msisdn_field_label")}
+            //     //         </option>
+            //     //     </Field> */}
+            //     // </div>
+            // );
         }
 
         return (
