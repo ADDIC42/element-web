@@ -36,7 +36,9 @@ test.describe("Audio player", { tag: ["@no-firefox", "@no-webkit"] }, () => {
 
         // Wait until the file is sent
         await expect(page.locator(".mx_RoomView_statusArea_expanded")).not.toBeVisible();
-        await expect(page.locator(".mx_EventTile.mx_EventTile_last .mx_EventTile_receiptSent")).toBeVisible();
+        await expect(page.locator(".mx_EventTile.mx_EventTile_last").getByRole("status")).toHaveAccessibleName(
+            "Your message was sent",
+        );
         // wait for the tile to finish loading
         await expect(
             page
@@ -351,7 +353,7 @@ test.describe("Audio player", { tag: ["@no-firefox", "@no-webkit"] }, () => {
         const composer = thread.locator(".mx_MessageComposer--compact");
         // Assert that the reply preview contains audio ReplyTile the file info button
         await expect(
-            composer.locator(".mx_ReplyPreview .mx_ReplyTile_audio .mx_MFileBody_info[role='button']"),
+            composer.locator(".mx_ReplyPreview .mx_ReplyTile .mx_MFileBody_info[role='button']"),
         ).toBeVisible();
 
         // Select :smile: emoji and send it
@@ -360,6 +362,6 @@ test.describe("Audio player", { tag: ["@no-firefox", "@no-webkit"] }, () => {
         await composer.getByTestId("basicmessagecomposer").press("Enter");
 
         // Assert that the file name is rendered on the file button
-        await expect(threadTile.locator(".mx_ReplyTile_audio .mx_MFileBody_info[role='button']")).toBeVisible();
+        await expect(threadTile.locator(".mx_ReplyTile .mx_MFileBody_info[role='button']")).toBeVisible();
     });
 });
